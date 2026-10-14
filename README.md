@@ -1,4 +1,4 @@
-# JMusic 🎧 — V3
+# JMusic 🎧 — V4
 
 JMusic is an Android music player built with Kotlin, Jetpack Compose, and AndroidX Media3/ExoPlayer.
 
@@ -10,6 +10,24 @@ JMusic is an Android music player built with Kotlin, Jetpack Compose, and Androi
 - Play/pause, seek, previous/next, and a persistent in-app mini-player while browsing
 - Add an authorized direct HTTPS audio URL or compatible HLS stream to play online
 - Dark interface and local playback queue
+
+## V4: Search and play full songs (YouTube embedded player)
+The **Search** tab searches music through the official YouTube Data API v3 and plays the full song in YouTube's official embedded player (android-youtube-player). Only videos whose owners allow embedding are listed.
+
+**Setup (one time)**
+1. In Google Cloud Console, create a project and enable **YouTube Data API v3**.
+2. Create an API key. Under *Application restrictions* choose **Android apps** and add package `com.jmusic.app` plus your debug/release SHA-1 (JMusic sends these with each request).
+3. Add the key to `local.properties` (git-ignored, never commit it):
+   ```
+   YOUTUBE_API_KEY=your_key_here
+   ```
+4. Sync Gradle and run.
+
+**Limits to know**
+- The embedded player must stay visible while it plays, so there is no audio-only mode and no background or screen-off playback. Leaving the Search tab or the app pauses/closes it. This is YouTube's rule, not a bug.
+- The free API quota is 10,000 units a day and each search costs 100 units, so roughly 100 searches a day per project.
+- Some videos refuse to play outside YouTube. JMusic shows a message; try another result.
+- Not built or tested on a device in this environment: sync, build, and try it on your phone.
 
 ## Run it
 1. Open the repository in Android Studio.

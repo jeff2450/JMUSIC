@@ -8,24 +8,31 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import androidx.activity.ComponentActivity
+import android.view.ViewGroup
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
@@ -37,9 +44,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -47,7 +57,21 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.net.UnknownHostException
 import java.util.Locale
 
 private val JGreen = Color(0xFF1ED760)
@@ -65,8 +89,22 @@ data class LocalSong(
     val artworkUri: Uri?
 )
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var player: ExoPlayer
+
+    // YouTube search + official embedded player
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var youTubeRepository: YouTubeRepository
+    private lateinit var youTubeView: YouTubePlayerView
+    private var youTubePlayer: YouTubePlayer? = null
+    private var pendingVideoId: String? = null
+    private var searchJob: Job? = null
+    private var youTubeQueue: List<YouTubeTrack> = emptyList()
+    private var youTubeResults by mutableStateOf<List<YouTubeTrack>>(emptyList())
+    private var youTubeLoading by mutableStateOf(false)
+    private var youTubeError by mutableStateOf<String?>(null)
+    private var youTubeCurrent by mutableStateOf<YouTubeTrack?>(null)
+
     private var songs by mutableStateOf<List<LocalSong>>(emptyList())
     private var permissionGranted by mutableStateOf(false)
     private var isPlaying by mutableStateOf(false)
@@ -104,6 +142,26 @@ class MainActivity : ComponentActivity() {
                 statusMessage = "Can't play this source. Check the URL, network, format, and streaming permission."
             }
         })
+        youTubeRepository = YouTubeRepository(this)
+        // The view is a lifecycle observer: YouTube's player pauses when the app leaves the screen
+        // (YouTube's terms don't allow background playback from the embedded player).
+        youTubeView = YouTubePlayerView(this)
+        lifecycle.addObserver(youTubeView)
+        youTubeView.addYouTubePlayerListener(object : AbstractYouTubePlayerListener() {
+            override fun onReady(youTubePlayer: YouTubePlayer) {
+                this@MainActivity.youTubePlayer = youTubePlayer
+                pendingVideoId?.let { youTubePlayer.loadVideo(it, 0f) }
+                pendingVideoId = null
+            }
+
+            override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
+                if (state == PlayerConstants.PlayerState.ENDED) playAdjacentYouTube(1)
+            }
+
+            override fun onError(youTubePlayer: YouTubePlayer, error: PlayerConstants.PlayerError) {
+                statusMessage = "YouTube can't play this video inside apps. Try another result."
+            }
+        })
         permissionGranted = hasAudioPermission()
         if (permissionGranted) loadLocalSongs()
         setContent {
@@ -121,6 +179,16 @@ class MainActivity : ComponentActivity() {
                         durationMs = durationMs,
                         positionMs = positionMs,
                         player = player,
+                        youTubeResults = youTubeResults,
+                        youTubeLoading = youTubeLoading,
+                        youTubeError = youTubeError,
+                        youTubeCurrent = youTubeCurrent,
+                        youTubeView = youTubeView,
+                        onSearchYouTube = { searchYouTube(it) },
+                        onPlayYouTube = { track -> youTubeQueue = youTubeResults; playYouTube(track) },
+                        onYouTubePrevious = { playAdjacentYouTube(-1) },
+                        onYouTubeNext = { playAdjacentYouTube(1) },
+                        onYouTubeClose = { stopYouTube(); statusMessage = "YouTube playback closed." },
                         onRequestPermission = { requestAudioPermission() },
                         onRefresh = { loadLocalSongs() },
                         onPlaySong = { song -> playLocalSong(song) },
@@ -193,7 +261,53 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun searchYouTube(query: String) {
+        val text = query.trim()
+        if (text.isEmpty()) return
+        searchJob?.cancel()
+        youTubeLoading = true
+        youTubeError = null
+        searchJob = uiScope.launch {
+            try {
+                val results = withContext(Dispatchers.IO) { youTubeRepository.search(text) }
+                youTubeResults = results
+                youTubeError = if (results.isEmpty()) "No playable music found for \"$text\"." else null
+            } catch (e: UnknownHostException) {
+                youTubeError = "No internet connection. Check your network and try again."
+            } catch (e: IOException) {
+                youTubeError = e.message ?: "Search failed. Try again."
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                youTubeError = "Couldn't read the search results. Try again."
+            } finally {
+                if (isActive) youTubeLoading = false
+            }
+        }
+    }
+
+    private fun playYouTube(track: YouTubeTrack) {
+        player.pause() // only one thing plays at a time
+        activeSource = "youtube"
+        youTubeCurrent = track
+        val ready = youTubePlayer
+        if (ready != null) ready.loadVideo(track.videoId, 0f) else pendingVideoId = track.videoId
+        statusMessage = "Playing in YouTube's official player. Keep JMusic open to keep listening."
+    }
+
+    private fun playAdjacentYouTube(step: Int) {
+        val index = youTubeQueue.indexOfFirst { it.videoId == youTubeCurrent?.videoId }
+        if (index < 0) return
+        youTubeQueue.getOrNull(index + step)?.let { playYouTube(it) }
+    }
+
+    private fun stopYouTube() {
+        youTubePlayer?.pause()
+        pendingVideoId = null
+        youTubeCurrent = null
+    }
+
     private fun playLocalSong(song: LocalSong) {
+        stopYouTube()
         activeSource = "phone"
         currentIndex = songs.indexOfFirst { it.id == song.id }
         val mediaItems = songs.map { item ->
@@ -229,6 +343,7 @@ class MainActivity : ComponentActivity() {
             statusMessage = "Use a direct audio URL or a compatible HLS (.m3u8) stream URL."
             return
         }
+        stopYouTube()
         activeSource = "online"
         currentIndex = -1
         val safeTitle = title.trim().ifBlank { parsed.lastPathSegment?.substringBeforeLast('.') ?: "Online stream" }
@@ -245,6 +360,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        uiScope.cancel()
         player.release()
         super.onDestroy()
     }
@@ -263,6 +379,16 @@ private fun JMusicHome(
     durationMs: Long,
     positionMs: Long,
     player: ExoPlayer,
+    youTubeResults: List<YouTubeTrack>,
+    youTubeLoading: Boolean,
+    youTubeError: String?,
+    youTubeCurrent: YouTubeTrack?,
+    youTubeView: YouTubePlayerView,
+    onSearchYouTube: (String) -> Unit,
+    onPlayYouTube: (YouTubeTrack) -> Unit,
+    onYouTubePrevious: () -> Unit,
+    onYouTubeNext: () -> Unit,
+    onYouTubeClose: () -> Unit,
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
     onPlaySong: (LocalSong) -> Unit,
@@ -277,7 +403,12 @@ private fun JMusicHome(
     var streamTitle by remember { mutableStateOf("") }
     var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var searchText by remember { mutableStateOf("") }
     var shownPosition by remember { mutableLongStateOf(0L) }
+    val focusManager = LocalFocusManager.current
+
+    // The embedded player must stay visible while it plays, so leaving the Search tab closes it.
+    LaunchedEffect(tab) { if (tab != "search" && youTubeCurrent != null) onYouTubeClose() }
 
     LaunchedEffect(player) {
         while (true) {
@@ -305,12 +436,76 @@ private fun JMusicHome(
                 Icon(Icons.Default.QueueMusic, null, tint = JGreen, modifier = Modifier.size(28.dp))
             }
             Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+                FilterChip(selected = tab == "search", onClick = { tab = "search" }, label = { Text("Search") }, leadingIcon = { Icon(Icons.Default.Search, null) })
                 FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Online stream") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
             }
             Spacer(Modifier.height(10.dp))
-            if (tab == "online") {
+            if (tab == "search") {
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search songs and artists") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (searchText.isNotEmpty()) IconButton(onClick = { searchText = "" }) { Icon(Icons.Default.Close, "Clear search") }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus(); onSearchYouTube(searchText) })
+                )
+                Spacer(Modifier.height(8.dp))
+                // YouTube's embedded player must stay visible while it plays (YouTube terms).
+                if (youTubeCurrent != null) {
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard)) {
+                        AndroidView(
+                            factory = {
+                                (youTubeView.parent as? ViewGroup)?.removeView(youTubeView)
+                                youTubeView
+                            },
+                            modifier = Modifier.fillMaxWidth().height(200.dp)
+                        )
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(youTubeCurrent.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(youTubeCurrent.channel, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton(onClick = onYouTubePrevious) { Icon(Icons.Default.SkipPrevious, "Previous result") }
+                            IconButton(onClick = onYouTubeNext) { Icon(Icons.Default.SkipNext, "Next result") }
+                            IconButton(onClick = onYouTubeClose) { Icon(Icons.Default.Close, "Close player", tint = JMuted) }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                when {
+                    youTubeLoading -> Box(Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = JGreen) }
+                    youTubeError != null -> Text(youTubeError, color = JMuted, modifier = Modifier.padding(top = 16.dp))
+                    youTubeResults.isEmpty() -> Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Search, null, tint = JGreen, modifier = Modifier.size(48.dp))
+                        Text("Find any song", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Type a song or artist and press search.", color = JMuted)
+                    }
+                    else -> LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(youTubeResults, key = { it.videoId }) { track ->
+                            val selected = track.videoId == youTubeCurrent?.videoId
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).clickable { onPlayYouTube(track) }.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(model = track.thumbnailUrl, contentDescription = "Thumbnail for ${track.title}", modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(track.title, fontWeight = FontWeight.SemiBold, color = if (selected) JGreen else Color.Unspecified, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(track.channel, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Icon(Icons.Default.PlayArrow, "Play ${track.title}", tint = if (selected) JGreen else JMuted)
+                            }
+                        }
+                    }
+                }
+            } else if (tab == "online") {
                 Text("Play a stream you own or are licensed to use", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("Paste a direct HTTPS audio URL or compatible HLS stream. Spotify track links are not audio stream URLs.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
                 OutlinedTextField(value = streamTitle, onValueChange = { streamTitle = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Track or station name (optional)") }, singleLine = true)
