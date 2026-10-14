@@ -12,6 +12,8 @@ android {
         targetSdk = 35
         versionCode = 3
         versionName = "0.3.0"
+
+        manifestPlaceholders["appAuthRedirectScheme"] = "jmusic"
     }
     buildFeatures { compose = true }
     compileOptions {
