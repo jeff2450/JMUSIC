@@ -1,8 +1,13 @@
 package com.jmusic.app
 
-import android.content.Intent
+import android.Manifest
+import android.content.ContentUris
+import android.content.pm.PackageManager
+import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,14 +16,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Stream
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,344 +40,410 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
-import net.openid.appauth.*
-import java.util.UUID
-import java.util.concurrent.Executors
+import kotlinx.coroutines.delay
+import java.util.Locale
 
-private val Green = Color(0xFF1DB954)
-private val Dark = Color(0xFF101010)
-private val CardDark = Color(0xFF202020)
-private val Muted = Color(0xFFB3B3B3)
+private val JGreen = Color(0xFF1ED760)
+private val JBackground = Color(0xFF101010)
+private val JCard = Color(0xFF202020)
+private val JMuted = Color(0xFFB3B3B3)
+
+data class LocalSong(
+    val id: Long,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val uri: Uri,
+    val artworkUri: Uri?
+)
 
 class MainActivity : ComponentActivity() {
-    private lateinit var authService: AuthorizationService
-    private lateinit var repo: SpotifyRepository
-    private val executor = Executors.newSingleThreadExecutor()
+    private lateinit var player: ExoPlayer
+    private var songs by mutableStateOf<List<LocalSong>>(emptyList())
+    private var permissionGranted by mutableStateOf(false)
+    private var isPlaying by mutableStateOf(false)
+    private var currentTitle by mutableStateOf("Choose a song")
+    private var currentArtist by mutableStateOf("Your music, your player")
+    private var currentArtwork by mutableStateOf<Uri?>(null)
+    private var statusMessage by mutableStateOf("Choose music from your phone or add an authorized stream URL.")
+    private var currentIndex by mutableIntStateOf(-1)
+    private var durationMs by mutableLongStateOf(0L)
+    private var positionMs by mutableLongStateOf(0L)
+    private var activeSource by mutableStateOf("phone")
 
-    private var artists by mutableStateOf<List<SpotifyArtist>>(emptyList())
-    private var tracks by mutableStateOf<List<SpotifyTrack>>(emptyList())
-    private var playlists by mutableStateOf<List<SpotifyPlaylist>>(emptyList())
-    private var selectedTrack by mutableStateOf<SpotifyTrack?>(null)
-    private var loading by mutableStateOf(false)
-    private var message by mutableStateOf<String?>(null)
-    private var connected by mutableStateOf(false)
-
-    private val authLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val data = result.data ?: return@registerForActivityResult
-        val response = AuthorizationResponse.fromIntent(data)
-        val exception = AuthorizationException.fromIntent(data)
-        if (response == null) {
-            message = exception?.errorDescription ?: "Spotify login cancelled."
-            return@registerForActivityResult
-        }
-        authService.performTokenRequest(response.createTokenExchangeRequest()) { tokenResponse, tokenException ->
-            val token = tokenResponse?.accessToken
-            runOnUiThread {
-                if (token != null) {
-                    repo.saveAccessToken(token)
-                    connected = true
-                    message = "Spotify connected."
-                    loadPlaylists()
-                } else message = tokenException?.errorDescription ?: "Could not obtain Spotify token."
-            }
-        }
+    private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        permissionGranted = granted
+        if (granted) loadLocalSongs() else statusMessage = "Allow audio access to show music stored on your phone."
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        authService = AuthorizationService(this)
-        repo = SpotifyRepository(this)
-        connected = repo.getAccessToken() != null
-
+        player = ExoPlayer.Builder(this).build()
+        player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                currentTitle = mediaItem?.mediaMetadata?.title?.toString() ?: "Unknown track"
+                currentArtist = mediaItem?.mediaMetadata?.artist?.toString() ?: "Unknown artist"
+                currentArtwork = mediaItem?.mediaMetadata?.artworkUri
+                durationMs = player.duration.coerceAtLeast(0L)
+                positionMs = player.currentPosition.coerceAtLeast(0L)
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) durationMs = player.duration.coerceAtLeast(0L)
+                if (playbackState == Player.STATE_ENDED) isPlaying = false
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                statusMessage = "Can't play this source. Check the URL, network, format, and streaming permission."
+            }
+        })
+        permissionGranted = hasAudioPermission()
+        if (permissionGranted) loadLocalSongs()
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Dark, surface = CardDark)) {
-                Surface(Modifier.fillMaxSize(), color = Dark) {
-                    val track = selectedTrack
-                    if (track != null) NowPlayingScreen(
-                        track = track,
-                        onBack = { selectedTrack = null },
-                        onPlay = { openUrl(track.spotifyUrl) }
-                    ) else BrowseScreen(
-                        connected = connected,
-                        artists = artists,
-                        tracks = tracks,
-                        playlists = playlists,
-                        loading = loading,
-                        message = message,
-                        onConnect = { connectSpotify() },
-                        onSearch = { search(it) },
-                        onRefresh = { loadPlaylists() },
-                        onTrackClick = { selectedTrack = it },
-                        onOpenArtist = { openUrl(it.spotifyUrl) },
-                        onOpenPlaylist = { openUrl(it.spotifyUrl) },
-                        onClearMessage = { message = null }
+            MaterialTheme(colorScheme = darkColorScheme(primary = JGreen, background = JBackground, surface = JCard)) {
+                Surface(Modifier.fillMaxSize(), color = JBackground) {
+                    JMusicHome(
+                        songs = songs,
+                        permissionGranted = permissionGranted,
+                        isPlaying = isPlaying,
+                        currentTitle = currentTitle,
+                        currentArtist = currentArtist,
+                        currentArtwork = currentArtwork,
+                        statusMessage = statusMessage,
+                        activeSource = activeSource,
+                        durationMs = durationMs,
+                        positionMs = positionMs,
+                        player = player,
+                        onRequestPermission = { requestAudioPermission() },
+                        onRefresh = { loadLocalSongs() },
+                        onPlaySong = { song -> playLocalSong(song) },
+                        onPlayOnline = { title, url -> playOnlineStream(title, url) },
+                        onTogglePlayback = { if (player.isPlaying) player.pause() else if (player.mediaItemCount > 0) player.play() },
+                        onPrevious = { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else if (currentIndex > 0) playLocalSong(songs[currentIndex - 1]) },
+                        onNext = { if (player.hasNextMediaItem()) player.seekToNextMediaItem() else if (currentIndex in 0 until songs.lastIndex) playLocalSong(songs[currentIndex + 1]) },
+                        onSeek = { position -> player.seekTo(position) },
+                        onClear = { player.stop(); currentTitle = "Choose a song"; currentArtist = "Your music, your player"; currentArtwork = null; durationMs = 0; positionMs = 0; currentIndex = -1 }
                     )
                 }
             }
         }
-        if (connected) loadPlaylists()
     }
 
-    private fun connectSpotify() {
-        if (SpotifyConfig.CLIENT_ID == "YOUR_SPOTIFY_CLIENT_ID") {
-            message = "Add your Spotify Client ID in SpotifyConfig.kt first."
-            return
-        }
-        val config = AuthorizationServiceConfiguration(Uri.parse(SpotifyConfig.AUTH_ENDPOINT), Uri.parse(SpotifyConfig.TOKEN_ENDPOINT))
-        val request = AuthorizationRequest.Builder(config, SpotifyConfig.CLIENT_ID, ResponseTypeValues.CODE, Uri.parse(SpotifyConfig.REDIRECT_URI))
-            .setScope(SpotifyConfig.SCOPES)
-            .setCodeVerifier(UUID.randomUUID().toString() + UUID.randomUUID().toString())
-            .build()
-        authLauncher.launch(authService.getAuthorizationRequestIntent(request))
+    private fun hasAudioPermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun search(query: String) {
-        if (!connected) {
-            message = "Connect Spotify before searching artists and songs."
+    private fun requestAudioPermission() {
+        val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+        audioPermission.launch(permission)
+    }
+
+    private fun loadLocalSongs() {
+        if (!hasAudioPermission()) {
+            permissionGranted = false
             return
         }
-        loading = true
-        message = null
-        executor.execute {
-            try {
-                val result = repo.search(query)
-                runOnUiThread {
-                    artists = result.artists
-                    tracks = result.tracks
-                    loading = false
-                    if (artists.isEmpty() && tracks.isEmpty()) message = "No artists or songs found. Try another search."
+        val list = mutableListOf<LocalSong>()
+        val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.ALBUM_ID
+        )
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        val sortOrder = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
+        try {
+            contentResolver.query(collection, projection, selection, null, sortOrder)?.use { cursor: Cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+                val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idColumn)
+                    val albumId = cursor.getLong(albumIdColumn)
+                    val artwork = if (albumId > 0) Uri.parse("content://media/external/audio/albumart/$albumId") else null
+                    list += LocalSong(
+                        id = id,
+                        title = cursor.getString(titleColumn) ?: "Unknown track",
+                        artist = cursor.getString(artistColumn)?.takeIf { it != "<unknown>" } ?: "Unknown artist",
+                        album = cursor.getString(albumColumn) ?: "",
+                        durationMs = cursor.getLong(durationColumn),
+                        uri = ContentUris.withAppendedId(collection, id),
+                        artworkUri = artwork
+                    )
                 }
-            } catch (e: Exception) {
-                runOnUiThread { loading = false; message = e.message ?: "Search failed." }
             }
+            songs = list
+            statusMessage = if (list.isEmpty()) "No local music found. Add audio files to your phone or use an authorized stream URL." else "Found ${list.size} songs on your phone."
+        } catch (e: Exception) {
+            statusMessage = "Couldn't read local music: ${e.message ?: "unknown error"}"
         }
     }
 
-    private fun loadPlaylists() {
-        if (repo.getAccessToken() == null) return
-        loading = true
-        executor.execute {
-            try {
-                val loaded = repo.getPlaylists()
-                runOnUiThread { playlists = loaded; loading = false }
-            } catch (e: Exception) {
-                runOnUiThread { loading = false; message = e.message ?: "Playlist sync failed." }
-            }
+    private fun playLocalSong(song: LocalSong) {
+        activeSource = "phone"
+        currentIndex = songs.indexOfFirst { it.id == song.id }
+        val mediaItems = songs.map { item ->
+            MediaItem.Builder()
+                .setUri(item.uri)
+                .setMediaId(item.id.toString())
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(item.title)
+                        .setArtist(item.artist)
+                        .setAlbumTitle(item.album)
+                        .setArtworkUri(item.artworkUri)
+                        .build()
+                ).build()
         }
+        player.setMediaItems(mediaItems, currentIndex.coerceAtLeast(0), 0L)
+        player.prepare()
+        player.play()
+        currentTitle = song.title
+        currentArtist = song.artist
+        currentArtwork = song.artworkUri
+        statusMessage = "Playing music stored on this phone."
     }
 
-    private fun openUrl(url: String) {
-        if (url.isBlank()) return
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    private fun playOnlineStream(title: String, urlInput: String) {
+        val url = urlInput.trim()
+        val parsed = runCatching { Uri.parse(url) }.getOrNull()
+        if (parsed == null || parsed.scheme != "https" || parsed.host.isNullOrBlank()) {
+            statusMessage = "Enter a valid HTTPS audio-stream URL that you own or are authorized to use."
+            return
+        }
+        if (!url.lowercase(Locale.ROOT).let { it.endsWith(".mp3") || it.endsWith(".m4a") || it.endsWith(".aac") || it.endsWith(".wav") || it.endsWith(".ogg") || it.endsWith(".opus") || it.endsWith(".m3u8") || it.contains("?") }) {
+            statusMessage = "Use a direct audio URL or a compatible HLS (.m3u8) stream URL."
+            return
+        }
+        activeSource = "online"
+        currentIndex = -1
+        val safeTitle = title.trim().ifBlank { parsed.lastPathSegment?.substringBeforeLast('.') ?: "Online stream" }
+        val item = MediaItem.Builder().setUri(parsed).setMediaMetadata(
+            MediaMetadata.Builder().setTitle(safeTitle).setArtist("Online stream").build()
+        ).build()
+        player.setMediaItem(item)
+        player.prepare()
+        player.play()
+        currentTitle = safeTitle
+        currentArtist = "Online stream"
+        currentArtwork = null
+        statusMessage = "Opening authorized stream inside JMusic…"
     }
 
     override fun onDestroy() {
-        authService.dispose()
-        executor.shutdown()
+        player.release()
         super.onDestroy()
     }
 }
 
 @Composable
-private fun BrowseScreen(
-    connected: Boolean,
-    artists: List<SpotifyArtist>,
-    tracks: List<SpotifyTrack>,
-    playlists: List<SpotifyPlaylist>,
-    loading: Boolean,
-    message: String?,
-    onConnect: () -> Unit,
-    onSearch: (String) -> Unit,
+private fun JMusicHome(
+    songs: List<LocalSong>,
+    permissionGranted: Boolean,
+    isPlaying: Boolean,
+    currentTitle: String,
+    currentArtist: String,
+    currentArtwork: Uri?,
+    statusMessage: String,
+    activeSource: String,
+    durationMs: Long,
+    positionMs: Long,
+    player: ExoPlayer,
+    onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
-    onTrackClick: (SpotifyTrack) -> Unit,
-    onOpenArtist: (SpotifyArtist) -> Unit,
-    onOpenPlaylist: (SpotifyPlaylist) -> Unit,
-    onClearMessage: () -> Unit
+    onPlaySong: (LocalSong) -> Unit,
+    onPlayOnline: (String, String) -> Unit,
+    onTogglePlayback: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onClear: () -> Unit
 ) {
+    var tab by remember { mutableStateOf("phone") }
+    var streamTitle by remember { mutableStateOf("") }
+    var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-    var showPlaylists by remember { mutableStateOf(false) }
+    var shownPosition by remember { mutableLongStateOf(0L) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-        Spacer(Modifier.height(20.dp))
+    LaunchedEffect(player) {
+        while (true) {
+            shownPosition = player.currentPosition.coerceAtLeast(0L)
+            delay(500)
+        }
+    }
+
+    val filteredSongs = remember(songs, query) {
+        songs.filter { query.isBlank() || it.title.contains(query, true) || it.artist.contains(query, true) || it.album.contains(query, true) }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 18.dp)) {
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(15.dp)).background(JGreen), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.LibraryMusic, null, tint = Color.Black, modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                    Text("Your music. Your player.", color = JMuted, style = MaterialTheme.typography.bodyMedium)
+                }
+                Icon(Icons.Default.QueueMusic, null, tint = JGreen, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+                FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Online stream") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
+            }
+            Spacer(Modifier.height(10.dp))
+            if (tab == "online") {
+                Text("Play a stream you own or are licensed to use", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Paste a direct HTTPS audio URL or compatible HLS stream. Spotify track links are not audio stream URLs.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                OutlinedTextField(value = streamTitle, onValueChange = { streamTitle = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Track or station name (optional)") }, singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = streamUrl, onValueChange = { streamUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("HTTPS audio stream URL") }, placeholder = { Text("https://example.com/audio.mp3") }, singleLine = true)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = { onPlayOnline(streamTitle, streamUrl) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)) {
+                    Icon(Icons.Default.PlayArrow, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Play inside JMusic", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Supported formats depend on the server and device. MP3/AAC/MP4 audio and compatible HLS streams are common choices.", color = JMuted, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Your songs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onRefresh) { Text("Refresh") }
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Filter songs, artists, albums") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.AudioFile, null) }
+                )
+                if (!permissionGranted) {
+                    Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.LibraryMusic, null, tint = JGreen, modifier = Modifier.size(54.dp))
+                        Text("Let JMusic find your music", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Audio permission is used to list songs stored on this phone.", color = JMuted)
+                        Button(onClick = onRequestPermission, modifier = Modifier.padding(top = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)) { Text("Allow audio access") }
+                    }
+                } else if (filteredSongs.isEmpty()) {
+                    Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Album, null, tint = JGreen, modifier = Modifier.size(48.dp))
+                        Text(if (songs.isEmpty()) "No music found yet" else "No matching songs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(if (songs.isEmpty()) "Copy supported audio files onto your phone, then refresh." else "Try another search.", color = JMuted)
+                    }
+                } else {
+                    Text("${filteredSongs.size} tracks", color = JMuted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(vertical = 6.dp))
+                    LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(filteredSongs, key = { it.id }) { song ->
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).clickable { onPlaySong(song) }.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (song.artworkUri != null) {
+                                    AsyncImage(model = song.artworkUri, contentDescription = "Album artwork for ${song.title}", modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                                } else {
+                                    Box(Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Album, null, tint = JGreen) }
+                                }
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(song.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(song.artist, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (song.album.isNotBlank()) Text(song.album, color = JMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text(formatTime(song.durationMs), color = JMuted, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        MiniPlayer(
+            title = currentTitle,
+            artist = currentArtist,
+            artwork = currentArtwork,
+            isPlaying = isPlaying,
+            durationMs = durationMs,
+            positionMs = shownPosition,
+            source = activeSource,
+            onToggle = onTogglePlayback,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onSeek = onSeek,
+            onClear = onClear
+        )
+        Text(statusMessage, color = JMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 16.dp, vertical = 8.dp))
+    }
+}
+
+@Composable
+private fun MiniPlayer(
+    title: String,
+    artist: String,
+    artwork: Uri?,
+    isPlaying: Boolean,
+    durationMs: Long,
+    positionMs: Long,
+    source: String,
+    onToggle: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onClear: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().background(Color(0xFF242424)).padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)).background(Green), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.MusicNote, null, tint = Color.Black, modifier = Modifier.size(30.dp))
+            if (artwork != null) AsyncImage(model = artwork, contentDescription = "Current album artwork", modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+            else Box(Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
+                Icon(if (source == "online") Icons.Default.Stream else Icons.Default.Album, null, tint = JGreen)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-                Text("Find your next favourite", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(artist, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (connected) IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh playlists") }
+            IconButton(onClick = onClear) { Icon(Icons.Default.Stop, "Stop playback", tint = JMuted) }
         }
-        Spacer(Modifier.height(20.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Search artists, songs, albums") },
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            trailingIcon = {
-                IconButton(onClick = { onSearch(query.trim()) }) {
-                    Icon(Icons.Default.Search, "Search Spotify", tint = Green)
-                }
-            }
+        Slider(
+            value = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() / durationMs.toFloat() else 0f,
+            onValueChange = { fraction -> if (durationMs > 0) onSeek((fraction * durationMs).toLong()) },
+            enabled = durationMs > 0,
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+            colors = SliderDefaults.colors(thumbColor = JGreen, activeTrackColor = JGreen)
         )
-        Spacer(Modifier.height(10.dp))
-        if (!connected) {
-            Button(onClick = onConnect, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
-                Text("Connect Spotify", fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(formatTime(positionMs), color = JMuted, style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous track") }
+            IconButton(onClick = onToggle, modifier = Modifier.size(48.dp).clip(CircleShape).background(JGreen)) {
+                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", tint = Color.Black, modifier = Modifier.size(30.dp))
             }
-            Text("Connect your account to search the Spotify catalog and sync playlists.", color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !showPlaylists, onClick = { showPlaylists = false }, label = { Text("Discover") })
-                FilterChip(selected = showPlaylists, onClick = { showPlaylists = true }, label = { Text("My playlists") })
-            }
-        }
-        if (loading) {
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green)
-        }
-        message?.let {
-            Text(it, color = if (it.contains("connected", true)) Green else Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp).clickable { onClearMessage() })
-        }
-        if (showPlaylists && connected) {
-            LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item { SectionHeading("Your playlists", "Open in Spotify to play") }
-                items(playlists, key = { "playlist-${it.id}" }) { playlist ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardDark).clickable { onOpenPlaylist(playlist) }.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(36.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(playlist.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${playlist.trackCount} tracks", color = Muted, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Icon(Icons.Default.OpenInNew, "Open playlist", tint = Muted)
-                    }
-                }
-            }
-        } else {
-            LazyColumn(contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (artists.isEmpty() && tracks.isEmpty()) {
-                    item {
-                        Column(Modifier.fillMaxWidth().padding(top = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Search, null, tint = Green, modifier = Modifier.size(52.dp))
-                            Spacer(Modifier.height(10.dp))
-                            Text("Search artists and songs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text("Artwork, track details, and links to Spotify.", color = Muted)
-                        }
-                    }
-                }
-                if (artists.isNotEmpty()) {
-                    item { SectionHeading("Artists", "Tap to open artist profile") }
-                    items(artists, key = { "artist-${it.id}" }) { artist ->
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardDark).clickable { onOpenArtist(artist) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (artist.imageUrl.isNotBlank()) AsyncImage(artist.imageUrl, contentDescription = "Artwork for ${artist.name}", modifier = Modifier.size(62.dp).clip(RoundedCornerShape(50)), contentScale = ContentScale.Fit)
-                            else Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(62.dp).padding(12.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(artist.name, fontWeight = FontWeight.SemiBold)
-                                Text("Artist", color = Muted, style = MaterialTheme.typography.bodySmall)
-                            }
-                            Icon(Icons.Default.OpenInNew, "Open artist", tint = Muted)
-                        }
-                    }
-                }
-                if (tracks.isNotEmpty()) {
-                    item { SectionHeading("Songs", "${tracks.size} results · tap for Now Playing") }
-                    items(tracks, key = { "track-${it.id}" }) { track ->
-                        TrackRow(track = track, onClick = { onTrackClick(track) })
-                    }
-                }
-                item {
-                    Text("Music metadata and artwork provided by Spotify. Tap a result to open its page in Spotify.", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 12.dp))
-                }
-            }
+            IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next track") }
+            Spacer(Modifier.weight(1f))
+            Text(formatTime(durationMs), color = JMuted, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
-@Composable
-private fun SectionHeading(title: String, subtitle: String) {
-    Column(Modifier.padding(top = 10.dp, bottom = 2.dp)) {
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun TrackRow(track: SpotifyTrack, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardDark).clickable(onClick = onClick).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (track.artworkUrl.isNotBlank()) {
-            AsyncImage(track.artworkUrl, contentDescription = "Album artwork for ${track.name}", modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Fit)
-        } else {
-            Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.MusicNote, null, tint = Green)
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(track.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track.artistNames, color = Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track.albumName, color = Muted.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Icon(Icons.Default.PlayArrow, "View track", tint = Green, modifier = Modifier.size(28.dp))
-    }
-}
-
-@Composable
-private fun NowPlayingScreen(track: SpotifyTrack, onBack: () -> Unit, onPlay: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().background(
-            androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF294E3B), Dark, Dark))
-        ).padding(horizontal = 22.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-            Text("NOW PLAYING", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Icon(Icons.Default.MusicNote, null, tint = Green)
-        }
-        Spacer(Modifier.height(24.dp))
-        if (track.artworkUrl.isNotBlank()) {
-            AsyncImage(
-                model = track.artworkUrl,
-                contentDescription = "Album artwork for ${track.name}",
-                modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)),
-                contentScale = ContentScale.Fit
-            )
-        } else {
-            Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(CardDark), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.MusicNote, null, tint = Green, modifier = Modifier.size(96.dp))
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-        Column(Modifier.fillMaxWidth()) {
-            Text(track.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(track.artistNames, style = MaterialTheme.typography.titleMedium, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (track.albumName.isNotBlank()) Text(track.albumName, style = MaterialTheme.typography.bodySmall, color = Muted.copy(alpha = 0.8f))
-        }
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = onPlay,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)
-        ) {
-            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Play in Spotify", fontWeight = FontWeight.Bold)
-        }
-        Text("Playback is handled by the official Spotify app.", color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
-        Text("Artwork © Spotify and its licensors · Open the track in Spotify for full details.", color = Muted, style = MaterialTheme.typography.labelSmall)
-    }
+private fun formatTime(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000L).toInt()
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
