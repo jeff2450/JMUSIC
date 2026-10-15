@@ -8,12 +8,17 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +35,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Stream
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,6 +54,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 private val JGreen = Color(0xFF1ED760)
@@ -311,19 +318,115 @@ private fun JMusicHome(
             }
             Spacer(Modifier.height(10.dp))
             if (tab == "online") {
-                Text("Play a stream you own or are licensed to use", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Paste a direct HTTPS audio URL or compatible HLS stream. Spotify track links are not audio stream URLs.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-                OutlinedTextField(value = streamTitle, onValueChange = { streamTitle = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Track or station name (optional)") }, singleLine = true)
+                var onlineQuery by remember { mutableStateOf("") }
+                var onlineTracks by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
+                var selectedOnlineTrack by remember { mutableStateOf<OnlineTrack?>(null) }
+                var searchingOnline by remember { mutableStateOf(false) }
+                var onlineError by remember { mutableStateOf("") }
+                val scope = rememberCoroutineScope()
+                val repository = remember { YouTubeMusicRepository() }
+
+                Text("Discover music", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Search YouTube videos and play them using YouTube's embedded player.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+                OutlinedTextField(
+                    value = onlineQuery,
+                    onValueChange = { onlineQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search songs, artists, albums…") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) }
+                )
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = streamUrl, onValueChange = { streamUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("HTTPS audio stream URL") }, placeholder = { Text("https://example.com/audio.mp3") }, singleLine = true)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { onPlayOnline(streamTitle, streamUrl) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)) {
-                    Icon(Icons.Default.PlayArrow, null)
+                Button(
+                    onClick = {
+                        scope.launch {
+                            searchingOnline = true
+                            onlineError = ""
+                            try {
+                                onlineTracks = repository.search(onlineQuery)
+                                if (onlineTracks.isEmpty()) onlineError = "No results found. Try another search."
+                            } catch (error: Exception) {
+                                onlineError = error.message ?: "Search failed. Check your connection and API key."
+                            } finally {
+                                searchingOnline = false
+                            }
+                        }
+                    },
+                    enabled = onlineQuery.isNotBlank() && !searchingOnline,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)
+                ) {
+                    Icon(Icons.Default.Search, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Play inside JMusic", fontWeight = FontWeight.Bold)
+                    Text(if (searchingOnline) "Searching…" else "Search YouTube")
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("Supported formats depend on the server and device. MP3/AAC/MP4 audio and compatible HLS streams are common choices.", color = JMuted, style = MaterialTheme.typography.bodySmall)
+                if (onlineError.isNotBlank()) {
+                    Text(onlineError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
+                }
+                selectedOnlineTrack?.let { track ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(track.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(track.artistOrChannel, color = JMuted, style = MaterialTheme.typography.bodySmall)
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().height(220.dp).padding(top = 8.dp),
+                        factory = { context ->
+                            WebView(context).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                webChromeClient = WebChromeClient()
+                                webViewClient = WebViewClient()
+                                val safeId = track.videoId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                                val html = """
+                                    <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+                                    <style>html,body{margin:0;padding:0;background:#101010;height:100%;}iframe{border:0;width:100%;height:100%;}</style>
+                                    </head><body><iframe src="https://www.youtube.com/embed/$safeId?playsinline=1&rel=0"
+                                    title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>
+                                """.trimIndent()
+                                loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                            }
+                        },
+                        update = { view ->
+                            val safeId = track.videoId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                            val html = """
+                                <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+                                <style>html,body{margin:0;padding:0;background:#101010;height:100%;}iframe{border:0;width:100%;height:100%;}</style>
+                                </head><body><iframe src="https://www.youtube.com/embed/$safeId?playsinline=1&rel=0"
+                                title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>
+                            """.trimIndent()
+                            view.loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                        }
+                    )
+                    TextButton(onClick = { selectedOnlineTrack = null }) { Text("Close video") }
+                }
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false),
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(onlineTracks, key = { it.videoId }) { track ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard)
+                                .clickable { selectedOnlineTrack = track }.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AsyncImage(
+                                model = track.thumbnailUrl.ifBlank { null },
+                                contentDescription = "Thumbnail for ${track.title}",
+                                modifier = Modifier.size(68.dp).clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(track.artistOrChannel, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.Default.PlayArrow, "Play in embedded player", tint = JGreen)
+                        }
+                    }
+                }
+                Text("YouTube playback follows YouTube's availability, ads, account, and background-play restrictions. This is not an unrestricted audio stream.", color = JMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(vertical = 6.dp))
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Your songs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
