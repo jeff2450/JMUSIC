@@ -32,3 +32,24 @@ Spotify's Web API returns catalog metadata and links, not unrestricted playable 
 
 ## Project
 https://github.com/jeff2450/JMUSIC
+
+## ArchiveTune-inspired development
+
+JMusic keeps its Kotlin + Jetpack Compose + Media3 architecture while building toward a music-first experience: online discovery, phone library, playlists/favorites, lyrics, and background controls.
+
+### Online catalog prototype
+- `YouTubeMusicRepository.kt` uses the official YouTube Data API v3 `search.list` endpoint to retrieve video titles, channel names, and thumbnails.
+- This is **catalog search only**; it does not provide playable audio URLs. YouTube playback should use an approved YouTube embedded player or the official YouTube app/site, subject to YouTube's terms and playback restrictions.
+- Create a Google Cloud project, enable YouTube Data API v3, create an API key, and restrict it to the extent supported for your app.
+- For local development, add this to your user-level Gradle properties file (do not commit a real key):
+  ```properties
+  YOUTUBE_API_KEY=YOUR_API_KEY
+  ```
+  On Windows this is commonly `%USERPROFILE%\\.gradle\\gradle.properties`. The app currently reads this property into BuildConfig for the repository prototype. A production release should proxy API requests through a backend or use an appropriate key-management approach; API keys embedded in an APK can be extracted.
+- Search UI, embedded playback UI, and a Media3 `MediaSessionService` are not connected yet. Local phone playback remains the current player implementation.
+
+### Important playback boundary
+The YouTube Data API returns metadata and video IDs, not unrestricted audio streams. JMusic will not extract audio-only stream URLs or bypass DRM, ads, subscriptions, regional restrictions, or other service controls. Background playback and lock-screen controls are intended for local files and sources that explicitly permit them. YouTube embedded playback may have its own limitations, including background-play restrictions.
+
+### License note
+ArchiveTune is a separate GPLv3 project. JMusic is being inspired by its general user experience, not copying its implementation or branding. If code is later copied or adapted from ArchiveTune, review and comply with GPLv3 obligations and keep ArchiveTune's name/logo separate.
