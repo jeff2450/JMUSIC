@@ -17,7 +17,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -387,15 +386,18 @@ private fun JMusicHome(
                             }
                         },
                         update = { view ->
-                            val safeId = track.videoId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
-                            val html = """
-                                <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-                                <style>html,body{margin:0;padding:0;background:#101010;height:100%;}iframe{border:0;width:100%;height:100%;}</style>
-                                </head><body><iframe src="https://www.youtube.com/embed/$safeId?playsinline=1&rel=0"
-                                title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>
-                            """.trimIndent()
-                            view.loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                            if (view.tag != track.videoId) {
+                                val safeId = track.videoId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+                                val html = """
+                                    <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+                                    <style>html,body{margin:0;padding:0;background:#101010;height:100%;}iframe{border:0;width:100%;height:100%;}</style>
+                                    </head><body><iframe src="https://www.youtube.com/embed/$safeId?playsinline=1&rel=0"
+                                    title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></body></html>
+                                """.trimIndent()
+                                view.tag = track.videoId
+                                view.loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                            }
                         }
                     )
                     TextButton(onClick = { selectedOnlineTrack = null }) { Text("Close video") }
