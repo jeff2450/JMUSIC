@@ -1,6 +1,6 @@
 # JMusic 🎧 — V3
 
-JMusic is an Android music player built with Kotlin, Jetpack Compose, and AndroidX Media3/ExoPlayer.
+JMusic is an Android music player built with Kotlin, Jetpack Compose, AndroidX Media3/ExoPlayer, and an optional YouTube catalog-search integration.
 
 ## V3 features
 - **In-app audio playback** using ExoPlayer (not the Spotify app)
@@ -46,7 +46,8 @@ JMusic keeps its Kotlin + Jetpack Compose + Media3 architecture while building t
   YOUTUBE_API_KEY=YOUR_API_KEY
   ```
   On Windows this is commonly `%USERPROFILE%\\.gradle\\gradle.properties`. The app currently reads this property into BuildConfig for the repository prototype. A production release should proxy API requests through a backend or use an appropriate key-management approach; API keys embedded in an APK can be extracted.
-- Search UI, embedded playback UI, and a Media3 `MediaSessionService` are not connected yet. Local phone playback remains the current player implementation.
+- The Online tab now provides a search field, displays results with thumbnails and channel names, and opens a selected video in an embedded YouTube player. Local phone playback remains available in its own tab.
+- A Media3 `MediaSessionService`, reliable background playback, notification/lock-screen controls, and a fully connected favorites/playlist library are still future work.
 
 ### Important playback boundary
 The YouTube Data API returns metadata and video IDs, not unrestricted audio streams. JMusic will not extract audio-only stream URLs or bypass DRM, ads, subscriptions, regional restrictions, or other service controls. Background playback and lock-screen controls are intended for local files and sources that explicitly permit them. YouTube embedded playback may have its own limitations, including background-play restrictions.
