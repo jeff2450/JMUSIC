@@ -7,15 +7,20 @@ android {
     namespace = "com.jmusic.app"
     compileSdk = 35
     defaultConfig {
+        val youtubeApiKey = providers.gradleProperty("YOUTUBE_API_KEY").orElse("").get()
+        buildConfigField("String", "YOUTUBE_API_KEY", "\"${youtubeApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         applicationId = "com.jmusic.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "jmusic"
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
