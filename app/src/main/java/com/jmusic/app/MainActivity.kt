@@ -272,7 +272,7 @@ private fun JMusicHome(
     activeSource: String,
     durationMs: Long,
     positionMs: Long,
-    player: ExoPlayer,
+    player: Player,
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
     onPlaySong: (LocalSong) -> Unit,
