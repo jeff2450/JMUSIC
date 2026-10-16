@@ -3,6 +3,8 @@ package com.jmusic.app
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -16,6 +18,11 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.Player
+import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 
 private val PlayerGreen = Color(0xFF1ED760)
@@ -51,6 +59,13 @@ internal fun NowPlayingDialog(
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit
 ) {
+    var showLyrics by remember { mutableStateOf(false) }
+    var lyricsLoading by remember { mutableStateOf(false) }
+    var lyricsError by remember { mutableStateOf<String?>(null) }
+    var lyricsResult by remember { mutableStateOf<LyricsResult?>(null) }
+    val lyricsScope = rememberCoroutineScope()
+    val activeLyricIndex = lyricsResult?.syncedLines?.indexOfLast { it.timeMs <= positionMs } ?: -1
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -99,7 +114,63 @@ internal fun NowPlayingDialog(
                     textAlign = TextAlign.Center
                 )
                 Text(artist, color = PlayerMuted, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(18.dp))
+                TextButton(
+                    onClick = {
+                        showLyrics = !showLyrics
+                        if (showLyrics && lyricsResult == null && !lyricsLoading) {
+                            lyricsScope.launch {
+                                lyricsLoading = true
+                                lyricsError = null
+                                try {
+                                    lyricsResult = LyricsRepository().findLyrics(title, artist)
+                                    if (lyricsResult == null) lyricsError = "Lyrics were not found for this track."
+                                } catch (error: Exception) {
+                                    lyricsError = error.message ?: "Could not load lyrics. Check your internet connection."
+                                } finally {
+                                    lyricsLoading = false
+                                }
+                            }
+                        }
+                    }
+                ) { Text(if (showLyrics) "Hide lyrics" else "Show lyrics", color = PlayerGreen) }
+                if (showLyrics) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 190.dp),
+                        color = Color(0xFF1D1D1D),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        when {
+                            lyricsLoading -> Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = PlayerGreen, modifier = Modifier.size(26.dp))
+                            }
+                            lyricsError != null -> Text(lyricsError!!, color = PlayerMuted, modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall)
+                            lyricsResult?.syncedLines?.isNotEmpty() == true -> {
+                                val lines = lyricsResult!!.syncedLines
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(lines) { line ->
+                                        val lineIndex = lines.indexOf(line)
+                                        Text(
+                                            line.text,
+                                            color = if (lineIndex == activeLyricIndex) PlayerGreen else PlayerMuted,
+                                            fontWeight = if (lineIndex == activeLyricIndex) FontWeight.Bold else FontWeight.Normal,
+                                            style = if (lineIndex == activeLyricIndex) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+                            }
+                            !lyricsResult?.plainLyrics.isNullOrBlank() -> {
+                                LazyColumn(Modifier.fillMaxWidth().padding(14.dp)) {
+                                    item { Text(lyricsResult!!.plainLyrics, color = PlayerMuted, style = MaterialTheme.typography.bodyMedium) }
+                                }
+                            }
+                            else -> Text("No lyrics available.", color = PlayerMuted, modifier = Modifier.padding(14.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
                 Slider(
                     value = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() / durationMs.toFloat() else 0f,
                     onValueChange = { fraction -> if (durationMs > 0L) onSeek((fraction * durationMs).toLong()) },
