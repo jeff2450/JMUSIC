@@ -9,6 +9,8 @@ JMusic is an Android music player built with Kotlin, Jetpack Compose, AndroidX M
 - Runtime audio-library permission handling (Android 13+ and older Android versions)
 - Album artwork where available from Android MediaStore and online tracks
 - Play/pause, seek, previous/next, and a persistent in-app mini-player while browsing
+- Background playback through Media3 `MediaSessionService`
+- Android media notification and lock-screen playback controls
 - Add an authorized direct HTTPS audio URL or compatible HLS stream to play custom streams
 - Dark interface and local playback queue
 
@@ -42,7 +44,7 @@ JMusic keeps its Kotlin + Jetpack Compose + Media3 architecture while building t
   ```
   On Windows this is commonly `%USERPROFILE%\\.gradle\\gradle.properties`. The app currently reads this property into BuildConfig for the repository prototype. A production release should proxy API requests through a backend or use an appropriate key-management approach; API keys embedded in an APK can be extracted.
 - The YouTube search tab provides a search field, displays results with thumbnails and channel names, and opens a selected result in the official YouTube app/browser. Local phone playback and authorized direct-stream playback remain available in separate tabs.
-- A Media3 `MediaSessionService`, reliable background playback, notification/lock-screen controls, and a fully connected favorites/playlist library are still future work.
+- A Media3 `PlaybackService` now owns the ExoPlayer instance through a `MediaSessionService`, enabling background playback and Android system media controls/lock-screen controls for local files and authorized direct audio/HLS streams. The app UI connects to that service with a `MediaController`. Favorites and playlist library integration remain future work.
 
 ### Important playback boundary
 The YouTube Data API returns metadata and video IDs, not unrestricted audio streams. YouTube's developer policies prohibit separating audio from audiovisual content, scraping, and undocumented API access. JMusic therefore does not extract audio-only stream URLs or bypass DRM, ads, subscriptions, regional restrictions, or other service controls. Background playback and lock-screen controls are intended for local files and sources that explicitly permit them. Read the [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) before distributing an app that uses the API.
