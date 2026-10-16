@@ -38,6 +38,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     implementation("androidx.media3:media3-common:1.8.0")
+    implementation("androidx.media3:media3-session:1.8.0")
     implementation("net.openid:appauth:0.11.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")

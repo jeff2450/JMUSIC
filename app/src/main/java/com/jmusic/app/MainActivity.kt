@@ -2,6 +2,7 @@ package com.jmusic.app
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
@@ -47,7 +48,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -69,7 +71,7 @@ data class LocalSong(
 )
 
 class MainActivity : ComponentActivity() {
-    private lateinit var player: ExoPlayer
+    private lateinit var player: MediaController
     private var songs by mutableStateOf<List<LocalSong>>(emptyList())
     private var permissionGranted by mutableStateOf(false)
     private var isPlaying by mutableStateOf(false)
@@ -89,8 +91,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        player = ExoPlayer.Builder(this).build()
-        player.addListener(object : Player.Listener {
+        val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+        val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture.addListener({
+            player = controllerFuture.get()
+            player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 currentTitle = mediaItem?.mediaMetadata?.title?.toString() ?: "Unknown track"
@@ -138,6 +143,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -249,7 +255,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        player.release()
+        if (::player.isInitialized) player.release()
         super.onDestroy()
     }
 }
