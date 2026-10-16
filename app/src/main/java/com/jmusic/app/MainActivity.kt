@@ -41,11 +41,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -400,24 +402,34 @@ private fun JMusicHome(
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 18.dp)) {
-            Spacer(Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(RoundedCornerShape(15.dp)).background(JGreen), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.LibraryMusic, null, tint = Color.Black, modifier = Modifier.size(28.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-                    Text("Your music. Your player.", color = JMuted, style = MaterialTheme.typography.bodyMedium)
-                }
-                IconButton(onClick = { showNowPlaying = true }) {
-                    Icon(Icons.Default.Album, "Open full player", tint = JGreen, modifier = Modifier.size(26.dp))
-                }
-                IconButton(onClick = { showQueue = true }) {
-                    Icon(Icons.Default.QueueMusic, "Open playback queue", tint = JGreen, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(14.dp))
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF214A32), Color(0xFF17251C), Color(0xFF1B1B1B))))
+                    .padding(start = 16.dp, top = 16.dp, end = 8.dp, bottom = 16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(52.dp).clip(RoundedCornerShape(17.dp)).background(JGreen),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.LibraryMusic, null, tint = Color.Black, modifier = Modifier.size(29.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("JMUSIC", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                        Text("Your sound. Your space.", color = Color(0xFFD0E7D7), style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(onClick = { showNowPlaying = true }) {
+                        Icon(Icons.Default.Album, "Open full player", tint = JGreen, modifier = Modifier.size(25.dp))
+                    }
+                    IconButton(onClick = { showQueue = true }) {
+                        Icon(Icons.Default.QueueMusic, "Open playback queue", tint = JGreen, modifier = Modifier.size(27.dp))
+                    }
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
                 FilterChip(selected = tab == "youtube", onClick = { tab = "youtube" }, label = { Text("YouTube") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
@@ -594,7 +606,7 @@ private fun JMusicHome(
             onCycleRepeat = onCycleRepeat,
             onClear = onClear
         )
-        Text(statusMessage, color = JMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 16.dp, vertical = 8.dp))
+        Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF171717)) { Text(statusMessage, color = JMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) }
     }
 }
 
@@ -617,7 +629,7 @@ private fun MiniPlayer(
     onCycleRepeat: () -> Unit,
     onClear: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().background(Color(0xFF242424)).padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFF292929), Color(0xFF171717)))).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (artwork != null) AsyncImage(model = artwork, contentDescription = "Current album artwork", modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
             else Box(Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
