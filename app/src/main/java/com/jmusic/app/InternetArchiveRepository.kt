@@ -75,7 +75,7 @@ class InternetArchiveRepository {
                     }
                 }
                 val audio = audioName ?: continue
-                val artwork = files.findImageFile(files)
+                val artwork = findArtworkFile(files)
                 val encodedIdentifier = URLEncoder.encode(identifier, "UTF-8").replace("+", "%20")
                 val encodedFile = audio.split("/").joinToString("/") {
                     URLEncoder.encode(it, "UTF-8").replace("+", "%20")
@@ -113,7 +113,7 @@ class InternetArchiveRepository {
         }
     }
 
-    private fun files.findImageFile(files: org.json.JSONArray): String? {
+    private fun findArtworkFile(files: org.json.JSONArray): String? {
         for (index in 0 until files.length()) {
             val file = files.optJSONObject(index) ?: continue
             val name = file.optString("name").lowercase()
