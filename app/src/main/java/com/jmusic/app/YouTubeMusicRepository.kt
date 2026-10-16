@@ -118,13 +118,20 @@ class YouTubeMusicRepository(
         }
     }
 
-    private fun formatDuration(isoDuration: String): String = runCatching {
-        val seconds = Duration.parse(isoDuration).seconds
-        if (seconds < 0) ""
-        val hours = seconds / 3600
-        val minutes = (seconds % 3600) / 60
-        val remainingSeconds = seconds % 60
-        if (hours > 0) "$hours:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}"
-        else "$minutes:${remainingSeconds.toString().padStart(2, '0')}"
-    }.getOrDefault("")
+    private fun formatDuration(isoDuration: String): String {
+        return try {
+            val seconds = Duration.parse(isoDuration).seconds
+            if (seconds < 0) return ""
+            val hours = seconds / 3600
+            val minutes = (seconds % 3600) / 60
+            val remainingSeconds = seconds % 60
+            if (hours > 0) {
+                "$hours:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}"
+            } else {
+                "$minutes:${remainingSeconds.toString().padStart(2, '0')}"
+            }
+        } catch (_: Exception) {
+            ""
+        }
+    }
 }
