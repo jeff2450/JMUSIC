@@ -2,6 +2,7 @@ package com.jmusic.app
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Stream
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +50,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 private val JGreen = Color(0xFF1ED760)
@@ -125,6 +128,7 @@ class MainActivity : ComponentActivity() {
                         onRefresh = { loadLocalSongs() },
                         onPlaySong = { song -> playLocalSong(song) },
                         onPlayOnline = { title, url -> playOnlineStream(title, url) },
+                        onOpenYouTube = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
                         onTogglePlayback = { if (player.isPlaying) player.pause() else if (player.mediaItemCount > 0) player.play() },
                         onPrevious = { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else if (currentIndex > 0) playLocalSong(songs[currentIndex - 1]) },
                         onNext = { if (player.hasNextMediaItem()) player.seekToNextMediaItem() else if (currentIndex in 0 until songs.lastIndex) playLocalSong(songs[currentIndex + 1]) },
@@ -267,6 +271,7 @@ private fun JMusicHome(
     onRefresh: () -> Unit,
     onPlaySong: (LocalSong) -> Unit,
     onPlayOnline: (String, String) -> Unit,
+    onOpenYouTube: (String) -> Unit,
     onTogglePlayback: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -274,6 +279,12 @@ private fun JMusicHome(
     onClear: () -> Unit
 ) {
     var tab by remember { mutableStateOf("phone") }
+    var youtubeQuery by remember { mutableStateOf("") }
+    var onlineTracks by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
+    var searchingYouTube by remember { mutableStateOf(false) }
+    var youtubeError by remember { mutableStateOf<String?>(null) }
+    val youtubeRepository = remember { YouTubeMusicRepository() }
+    val scope = rememberCoroutineScope()
     var streamTitle by remember { mutableStateOf("") }
     var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
@@ -307,10 +318,46 @@ private fun JMusicHome(
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
-                FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Online stream") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
+                FilterChip(selected = tab == "youtube", onClick = { tab = "youtube" }, label = { Text("YouTube search") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
+                FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Audio URL") }, leadingIcon = { Icon(Icons.Default.AudioFile, null) })
             }
             Spacer(Modifier.height(10.dp))
-            if (tab == "online") {
+            if (tab == "youtube") {
+                Text("Discover music on YouTube", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Search uses your YouTube Data API key. Tap a result to open the official YouTube player; JMusic does not extract audio from YouTube.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                OutlinedTextField(value = youtubeQuery, onValueChange = { youtubeQuery = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Song or artist") }, placeholder = { Text("Search music") }, singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    scope.launch {
+                        searchingYouTube = true
+                        youtubeError = null
+                        try { onlineTracks = youtubeRepository.search(youtubeQuery) }
+                        catch (error: Exception) { youtubeError = error.message ?: "YouTube search failed."; onlineTracks = emptyList() }
+                        finally { searchingYouTube = false }
+                    }
+                }, enabled = youtubeQuery.isNotBlank() && !searchingYouTube, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)) {
+                    Text(if (searchingYouTube) "Searching…" else "Search YouTube", fontWeight = FontWeight.Bold)
+                }
+                youtubeError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                if (onlineTracks.isNotEmpty()) {
+                    LazyColumn(contentPadding = PaddingValues(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(onlineTracks, key = { it.videoId }) { track ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).clickable { onOpenYouTube(track.watchUrl) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (track.thumbnailUrl.isNotBlank()) AsyncImage(model = track.thumbnailUrl, contentDescription = "Thumbnail for ${track.title}", modifier = Modifier.size(58.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                                else Box(Modifier.size(58.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Stream, null, tint = JGreen) }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(track.artistOrChannel, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Open in YouTube", color = JGreen, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                } else if (youtubeError == null && !searchingYouTube) {
+                    Text("Search for a song or artist to discover tracks.", color = JMuted, modifier = Modifier.padding(top = 12.dp))
+                }
+            } else if (tab == "online") {
                 Text("Play a stream you own or are licensed to use", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("Paste a direct HTTPS audio URL or compatible HLS stream. Spotify track links are not audio stream URLs.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
                 OutlinedTextField(value = streamTitle, onValueChange = { streamTitle = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Track or station name (optional)") }, singleLine = true)
