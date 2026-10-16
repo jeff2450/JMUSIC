@@ -1,53 +1,36 @@
 # JMusic 🎧 — V3
 
-JMusic is an Android music player built with Kotlin, Jetpack Compose, AndroidX Media3/ExoPlayer, and an optional YouTube catalog-search integration.
+JMusic is an Android music player built with Kotlin, Jetpack Compose, AndroidX Media3/ExoPlayer, and YouTube catalog search.
 
-## V3 features
-- **In-app audio playback** using ExoPlayer
-- **YouTube catalog search**: Search for songs and artists, view thumbnails and channel names, and open selected results in the official YouTube player
-- Browse and filter audio files stored on the phone
-- Runtime audio-library permission handling (Android 13+ and older Android versions)
-- Album artwork where available from Android MediaStore and online tracks
-- Play/pause, seek, previous/next, and a persistent in-app mini-player while browsing
-- Background playback through Media3 `MediaSessionService`
-- Android media notification and lock-screen playback controls
-- Add an authorized direct HTTPS audio URL or compatible HLS stream to play custom streams
-- Dark interface and local playback queue
+## Features
+- **YouTube catalog search** for songs, artists, and videos using the official YouTube Data API v3
+- Search results with thumbnails, titles, channel names, and video durations when available
+- Open selected videos in the official YouTube app or website
+- Browse and play audio files stored on the phone
+- Favorites and playlists for local music
+- Play/pause, seek, previous/next, shuffle/repeat, queue, and a persistent mini-player
+- Background playback and Android media controls for local files and authorized direct audio streams
+- Search Internet Archive recordings with open-license metadata and play supported original audio files
+- Add an authorized direct HTTPS audio URL or compatible HLS stream
+- Dark interface
 
-## Run it
-1. Open the repository in Android Studio.
-2. Let Gradle sync dependencies.
-3. Run on an Android phone or emulator.
-4. Open **YouTube Music** tab, search for a track or artist, and tap any result to play audio inside JMusic.
-5. Open **Phone library** and grant audio access to play local songs.
-6. Open **Direct URL** to play custom direct HTTPS audio or HLS stream URLs.
+## Configure the YouTube API key
+1. In Google Cloud Console, enable **YouTube Data API v3** for your project.
+2. Create an API key and apply appropriate restrictions and quota monitoring.
+3. Add the following to your user-level Gradle properties file (do not commit your real key):
+   ```properties
+   YOUTUBE_API_KEY=YOUR_API_KEY
+   ```
+   On Windows this is commonly `%USERPROFILE%\.gradle\gradle.properties`.
+4. Open the repository in Android Studio, sync Gradle, and run the app.
+5. Open the **YouTube** tab, search for a song or artist, and tap a result to open it in YouTube.
 
-## Implementation notes
-- YouTube search uses the documented YouTube Data API v3 `search.list` endpoint for catalog metadata only.
-- Media3 dependencies use version 1.8.0, with all Media3 artifacts kept on the same version.
-- Local file access uses `READ_MEDIA_AUDIO` on Android 13+ and `READ_EXTERNAL_STORAGE` on older versions.
+The app calls `search.list` for results and `videos.list` to request duration metadata. A duration may be unavailable for some results. If the duration lookup fails, search results still appear.
+
+## Playback limitations
+The YouTube Data API provides metadata and video IDs, not unrestricted audio-stream URLs. JMusic does not extract YouTube audio or bypass YouTube playback, advertisements, subscriptions, DRM, or regional restrictions. Selected YouTube videos open in the official YouTube app/site; YouTube background audio is not played through JMusic's Media3 service.
+
+Media3 background playback is intended for local files and sources that explicitly permit direct streaming, such as supported open-license recordings or authorized direct audio/HLS URLs. Review the [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) before distributing the app.
 
 ## Project
 https://github.com/jeff2450/JMUSIC
-
-## ArchiveTune-inspired development
-
-JMusic keeps its Kotlin + Jetpack Compose + Media3 architecture while building toward a music-first experience: online discovery, phone library, playlists/favorites, lyrics, and background controls.
-
-### Online catalog prototype
-- `YouTubeMusicRepository.kt` uses the official YouTube Data API v3 `search.list` endpoint to retrieve video titles, channel names, and thumbnails.
-- This is **catalog search only**; it does not provide playable audio URLs. YouTube playback should use an approved YouTube embedded player or the official YouTube app/site, subject to YouTube's terms and playback restrictions.
-- Create a Google Cloud project, enable YouTube Data API v3, create an API key, and restrict it to the extent supported for your app.
-- For local development, add this to your user-level Gradle properties file (do not commit a real key):
-  ```properties
-  YOUTUBE_API_KEY=YOUR_API_KEY
-  ```
-  On Windows this is commonly `%USERPROFILE%\\.gradle\\gradle.properties`. The app currently reads this property into BuildConfig for the repository prototype. A production release should proxy API requests through a backend or use an appropriate key-management approach; API keys embedded in an APK can be extracted.
-- The YouTube search tab provides a search field, displays results with thumbnails and channel names, and opens a selected result in the official YouTube app/browser. Local phone playback and authorized direct-stream playback remain available in separate tabs.
-- A Media3 `PlaybackService` now owns the ExoPlayer instance through a `MediaSessionService`, enabling background playback and Android system media controls/lock-screen controls for local files and authorized direct audio/HLS streams. The app UI connects to that service with a `MediaController`. Favorites and playlist library integration remain future work.
-
-### Important playback boundary
-The YouTube Data API returns metadata and video IDs, not unrestricted audio streams. YouTube's developer policies prohibit separating audio from audiovisual content, scraping, and undocumented API access. JMusic therefore does not extract audio-only stream URLs or bypass DRM, ads, subscriptions, regional restrictions, or other service controls. Background playback and lock-screen controls are intended for local files and sources that explicitly permit them. Read the [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) before distributing an app that uses the API.
-
-### License note
-ArchiveTune is a separate GPLv3 project. JMusic is being inspired by its general user experience, not copying its implementation or branding. If code is later copied or adapted from ArchiveTune, review and comply with GPLv3 obligations and keep ArchiveTune's name/logo separate.
