@@ -120,7 +120,7 @@ class YouTubeMusicRepository(
 
     private fun formatDuration(isoDuration: String): String = runCatching {
         val seconds = Duration.parse(isoDuration).seconds
-        if (seconds < 0) return ""
+        if (seconds < 0) ""
         val hours = seconds / 3600
         val minutes = (seconds % 3600) / 60
         val remainingSeconds = seconds % 60
