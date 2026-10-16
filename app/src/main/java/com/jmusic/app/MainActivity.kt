@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
@@ -325,6 +326,7 @@ private fun JMusicHome(
     var streamTitle by remember { mutableStateOf("") }
     var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var searchScope by remember { mutableStateOf("all") }
     var shownPosition by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
     var showNowPlaying by remember { mutableStateOf(false) }
@@ -396,8 +398,15 @@ private fun JMusicHome(
         )
     }
 
-    val filteredSongs = remember(songs, query) {
-        songs.filter { query.isBlank() || it.title.contains(query, true) || it.artist.contains(query, true) || it.album.contains(query, true) }
+    val filteredSongs = remember(songs, query, searchScope) {
+        songs.filter { song ->
+            if (query.isBlank()) true else when (searchScope) {
+                "songs" -> song.title.contains(query.trim(), ignoreCase = true)
+                "artists" -> song.artist.contains(query.trim(), ignoreCase = true)
+                "albums" -> song.album.contains(query.trim(), ignoreCase = true)
+                else -> song.title.contains(query.trim(), true) || song.artist.contains(query.trim(), true) || song.album.contains(query.trim(), true)
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -545,10 +554,18 @@ private fun JMusicHome(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Filter songs, artists, albums") },
+                    placeholder = { Text(when (searchScope) { "songs" -> "Search song titles"; "artists" -> "Search artists"; "albums" -> "Search albums"; else -> "Search songs, artists, albums" }) },
                     singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.AudioFile, null) }
+                    leadingIcon = { Icon(Icons.Default.AudioFile, null) },
+                    trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, contentDescription = "Clear search") } }
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = searchScope == "all", onClick = { searchScope = "all" }, label = { Text("All") })
+                    FilterChip(selected = searchScope == "songs", onClick = { searchScope = "songs" }, label = { Text("Songs") })
+                    FilterChip(selected = searchScope == "artists", onClick = { searchScope = "artists" }, label = { Text("Artists") })
+                    FilterChip(selected = searchScope == "albums", onClick = { searchScope = "albums" }, label = { Text("Albums") })
+                }
                 if (!permissionGranted) {
                     Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.LibraryMusic, null, tint = JGreen, modifier = Modifier.size(54.dp))
@@ -563,7 +580,13 @@ private fun JMusicHome(
                         Text(if (songs.isEmpty()) "Copy supported audio files onto your phone, then refresh." else "Try another search.", color = JMuted)
                     }
                 } else {
-                    Text("${filteredSongs.size} tracks", color = JMuted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(vertical = 6.dp))
+                    val resultLabel = when (searchScope) {
+                        "songs" -> "${filteredSongs.size} matching songs"
+                        "artists" -> "${filteredSongs.map { it.artist }.distinct().size} matching artists · ${filteredSongs.size} tracks"
+                        "albums" -> "${filteredSongs.map { it.album }.filter { it.isNotBlank() }.distinct().size} matching albums · ${filteredSongs.size} tracks"
+                        else -> "${filteredSongs.size} matching tracks"
+                    }
+                    Text(resultLabel, color = JMuted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(vertical = 6.dp))
                     LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(filteredSongs, key = { it.id }) { song ->
                             Row(
