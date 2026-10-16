@@ -83,6 +83,8 @@ class MainActivity : ComponentActivity() {
     private var durationMs by mutableLongStateOf(0L)
     private var positionMs by mutableLongStateOf(0L)
     private var activeSource by mutableStateOf("phone")
+    private var shuffleEnabled by mutableStateOf(false)
+    private var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
 
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
@@ -95,18 +97,27 @@ class MainActivity : ComponentActivity() {
         val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
         controllerFuture.addListener({
             player = controllerFuture.get()
+            shuffleEnabled = player.shuffleModeEnabled
+            repeatMode = player.repeatMode
             player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 currentTitle = mediaItem?.mediaMetadata?.title?.toString() ?: "Unknown track"
                 currentArtist = mediaItem?.mediaMetadata?.artist?.toString() ?: "Unknown artist"
                 currentArtwork = mediaItem?.mediaMetadata?.artworkUri
+                currentIndex = songs.indexOfFirst { it.id.toString() == mediaItem?.mediaId }
                 durationMs = player.duration.coerceAtLeast(0L)
                 positionMs = player.currentPosition.coerceAtLeast(0L)
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) durationMs = player.duration.coerceAtLeast(0L)
                 if (playbackState == Player.STATE_ENDED) isPlaying = false
+            }
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                shuffleEnabled = shuffleModeEnabled
+            }
+            override fun onRepeatModeChanged(repeatModeValue: Int) {
+                repeatMode = repeatModeValue
             }
             override fun onPlayerError(error: PlaybackException) {
                 statusMessage = "Can't play this source. Check the URL, network, format, and streaming permission."
@@ -126,6 +137,8 @@ class MainActivity : ComponentActivity() {
                         currentArtwork = currentArtwork,
                         statusMessage = statusMessage,
                         activeSource = activeSource,
+                        shuffleEnabled = shuffleEnabled,
+                        repeatMode = repeatMode,
                         durationMs = durationMs,
                         positionMs = positionMs,
                         player = player,
@@ -138,7 +151,9 @@ class MainActivity : ComponentActivity() {
                         onPrevious = { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else if (currentIndex > 0) playLocalSong(songs[currentIndex - 1]) },
                         onNext = { if (player.hasNextMediaItem()) player.seekToNextMediaItem() else if (currentIndex in 0 until songs.lastIndex) playLocalSong(songs[currentIndex + 1]) },
                         onSeek = { position -> player.seekTo(position) },
-                        onClear = { player.stop(); currentTitle = "Choose a song"; currentArtist = "Your music, your player"; currentArtwork = null; durationMs = 0; positionMs = 0; currentIndex = -1 }
+                        onToggleShuffle = { shuffleEnabled = !shuffleEnabled; player.shuffleModeEnabled = shuffleEnabled },
+                        onCycleRepeat = { repeatMode = when (repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF }; player.repeatMode = repeatMode },
+                        onClear = { player.stop(); player.clearMediaItems(); currentTitle = "Choose a song"; currentArtist = "Your music, your player"; currentArtwork = null; durationMs = 0; positionMs = 0; currentIndex = -1; activeSource = "phone"; isPlaying = false }
                     )
                 }
             }
@@ -270,6 +285,8 @@ private fun JMusicHome(
     currentArtwork: Uri?,
     statusMessage: String,
     activeSource: String,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
     durationMs: Long,
     positionMs: Long,
     player: Player,
@@ -282,6 +299,8 @@ private fun JMusicHome(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Long) -> Unit,
+    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> Unit,
     onClear: () -> Unit
 ) {
     var tab by remember { mutableStateOf("phone") }
@@ -295,12 +314,53 @@ private fun JMusicHome(
     var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var shownPosition by remember { mutableLongStateOf(0L) }
+    var showQueue by remember { mutableStateOf(false) }
 
     LaunchedEffect(player) {
         while (true) {
             shownPosition = player.currentPosition.coerceAtLeast(0L)
             delay(500)
         }
+    }
+
+    if (showQueue) {
+        AlertDialog(
+            onDismissRequest = { showQueue = false },
+            title = { Text("Playback queue (${player.mediaItemCount})") },
+            text = {
+                if (player.mediaItemCount == 0) {
+                    Text("Your queue is empty. Play a song from your phone library to build a queue.", color = JMuted)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items((0 until player.mediaItemCount).toList(), key = { it }) { index ->
+                            val item = player.getMediaItemAt(index)
+                            val selected = index == player.currentMediaItemIndex
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selected) Color(0xFF263A2D) else JCard)
+                                    .clickable {
+                                        player.seekTo(index, 0L)
+                                        player.play()
+                                        showQueue = false
+                                    }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("${index + 1}", color = if (selected) JGreen else JMuted, modifier = Modifier.width(28.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.mediaMetadata.title?.toString() ?: "Unknown track", fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(item.mediaMetadata.artist?.toString() ?: "Unknown artist", color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (selected) Icon(Icons.Default.PlayArrow, "Currently selected", tint = JGreen)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showQueue = false }) { Text("Done") } },
+            containerColor = JCard
+        )
     }
 
     val filteredSongs = remember(songs, query) {
@@ -319,7 +379,9 @@ private fun JMusicHome(
                     Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
                     Text("Your music. Your player.", color = JMuted, style = MaterialTheme.typography.bodyMedium)
                 }
-                Icon(Icons.Default.QueueMusic, null, tint = JGreen, modifier = Modifier.size(28.dp))
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(Icons.Default.QueueMusic, "Open playback queue", tint = JGreen, modifier = Modifier.size(28.dp))
+                }
             }
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -437,10 +499,14 @@ private fun JMusicHome(
             durationMs = durationMs,
             positionMs = shownPosition,
             source = activeSource,
+            shuffleEnabled = shuffleEnabled,
+            repeatMode = repeatMode,
             onToggle = onTogglePlayback,
             onPrevious = onPrevious,
             onNext = onNext,
             onSeek = onSeek,
+            onToggleShuffle = onToggleShuffle,
+            onCycleRepeat = onCycleRepeat,
             onClear = onClear
         )
         Text(statusMessage, color = JMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 16.dp, vertical = 8.dp))
@@ -456,10 +522,14 @@ private fun MiniPlayer(
     durationMs: Long,
     positionMs: Long,
     source: String,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Long) -> Unit,
+    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> Unit,
     onClear: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().background(Color(0xFF242424)).padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -474,6 +544,10 @@ private fun MiniPlayer(
                 Text(artist, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = onClear) { Icon(Icons.Default.Stop, "Stop playback", tint = JMuted) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onToggleShuffle) { Text(if (shuffleEnabled) "Shuffle: On" else "Shuffle: Off", color = if (shuffleEnabled) JGreen else JMuted) }
+            TextButton(onClick = onCycleRepeat) { Text("Repeat: ${when (repeatMode) { Player.REPEAT_MODE_ALL -> "All"; Player.REPEAT_MODE_ONE -> "One"; else -> "Off" }}", color = if (repeatMode == Player.REPEAT_MODE_OFF) JMuted else JGreen) }
         }
         Slider(
             value = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() / durationMs.toFloat() else 0f,
