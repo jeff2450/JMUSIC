@@ -26,6 +26,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
@@ -60,6 +64,8 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val JGreen = Color(0xFF1ED760)
 private val JBackground = Color(0xFF101010)
@@ -330,6 +336,28 @@ private fun JMusicHome(
     var shownPosition by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val libraryPrefs = remember { context.getSharedPreferences("jmusic_library", android.content.Context.MODE_PRIVATE) }
+    var favoriteIds by remember { mutableStateOf(runCatching { val a = JSONArray(libraryPrefs.getString("favorites", "[]")); (0 until a.length()).map { a.getLong(it) }.toSet() }.getOrDefault(emptySet())) }
+    var playlists by remember { mutableStateOf(runCatching { val o = JSONObject(libraryPrefs.getString("playlists", "{}")); buildMap { val keys = o.keys(); while (keys.hasNext()) { val k = keys.next(); val a = o.optJSONArray(k) ?: JSONArray(); put(k, (0 until a.length()).map { a.getLong(it) }) } } }.getOrDefault(emptyMap())) }
+    var showCreatePlaylist by remember { mutableStateOf(false) }
+    var playlistName by remember { mutableStateOf("") }
+    var addSongToPlaylist by remember { mutableStateOf<LocalSong?>(null) }
+    var activePlaylist by remember { mutableStateOf<String?>(null) }
+
+    fun persistLibrary() {
+        val favoriteJson = JSONArray().apply { favoriteIds.sorted().forEach { put(it) } }
+        val playlistJson = JSONObject().apply { playlists.forEach { (name, ids) -> put(name, JSONArray().apply { ids.forEach { put(it) } }) } }
+        libraryPrefs.edit().putString("favorites", favoriteJson.toString()).putString("playlists", playlistJson.toString()).apply()
+    }
+    fun toggleFavorite(song: LocalSong) {
+        favoriteIds = if (song.id in favoriteIds) favoriteIds - song.id else favoriteIds + song.id
+        persistLibrary()
+    }
+    fun addToPlaylist(name: String, song: LocalSong) {
+        playlists = playlists + (name to ((playlists[name].orEmpty() + song.id).distinct()))
+        persistLibrary()
+    }
 
     LaunchedEffect(player) {
         while (true) {
@@ -398,8 +426,9 @@ private fun JMusicHome(
         )
     }
 
-    val filteredSongs = remember(songs, query, searchScope) {
-        songs.filter { song ->
+    val filteredSongs = remember(songs, query, searchScope, tab, favoriteIds) {
+        val sourceSongs = if (tab == "favorites") songs.filter { it.id in favoriteIds } else songs
+        sourceSongs.filter { song ->
             if (query.isBlank()) true else when (searchScope) {
                 "songs" -> song.title.contains(query.trim(), ignoreCase = true)
                 "artists" -> song.artist.contains(query.trim(), ignoreCase = true)
@@ -440,7 +469,9 @@ private fun JMusicHome(
             }
             Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+                FilterChip(selected = tab == "phone", onClick = { tab = "phone"; activePlaylist = null }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+                FilterChip(selected = tab == "favorites", onClick = { tab = "favorites"; activePlaylist = null }, label = { Text("Favorites") }, leadingIcon = { Icon(Icons.Default.Favorite, null) })
+                FilterChip(selected = tab == "playlists", onClick = { tab = "playlists"; activePlaylist = null }, label = { Text("Playlists") }, leadingIcon = { Icon(Icons.Default.QueueMusic, null) })
                 FilterChip(selected = tab == "youtube", onClick = { tab = "youtube" }, label = { Text("YouTube") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
                 FilterChip(selected = tab == "archive", onClick = { tab = "archive" }, label = { Text("Open music") }, leadingIcon = { Icon(Icons.Default.Album, null) })
                 FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Audio URL") }, leadingIcon = { Icon(Icons.Default.AudioFile, null) })
@@ -545,9 +576,39 @@ private fun JMusicHome(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text("Supported formats depend on the server and device. MP3/AAC/MP4 audio and compatible HLS streams are common choices.", color = JMuted, style = MaterialTheme.typography.bodySmall)
+            } else if (tab == "playlists") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(activePlaylist ?: "Your playlists", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (activePlaylist != null) TextButton(onClick = { activePlaylist = null }) { Text("Back") }
+                    else Button(onClick = { playlistName = ""; showCreatePlaylist = true }, colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)) { Icon(Icons.Default.Add, null); Text("Create") }
+                }
+                if (activePlaylist == null) {
+                    if (playlists.isEmpty()) Text("Create a playlist to organize your music.", color = JMuted, modifier = Modifier.padding(top = 16.dp))
+                    LazyColumn(contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(playlists.keys.toList(), key = { it }) { name ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.QueueMusic, null, tint = JGreen, modifier = Modifier.size(32.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f).clickable { activePlaylist = name }) { Text(name, fontWeight = FontWeight.SemiBold); Text("${playlists[name].orEmpty().size} songs", color = JMuted, style = MaterialTheme.typography.bodySmall) }
+                                IconButton(onClick = { playlists = playlists - name; persistLibrary() }) { Icon(Icons.Default.Delete, "Delete playlist", tint = JMuted) }
+                            }
+                        }
+                    }
+                } else {
+                    val playlistSongs = songs.filter { it.id in playlists[activePlaylist].orEmpty() }
+                    if (playlistSongs.isEmpty()) Text("This playlist is empty. Add songs from Phone library.", color = JMuted, modifier = Modifier.padding(top = 16.dp))
+                    LazyColumn(contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(playlistSongs, key = { it.id }) { song ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f).clickable { onPlaySong(song) }) { Text(song.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(song.artist, color = JMuted, style = MaterialTheme.typography.bodySmall) }
+                                IconButton(onClick = { playlists = playlists + (activePlaylist!! to playlists[activePlaylist].orEmpty().filterNot { it == song.id }); persistLibrary() }) { Icon(Icons.Default.Delete, "Remove song from playlist", tint = JMuted) }
+                            }
+                        }
+                    }
+                }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Your songs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(if (tab == "favorites") "Favorite songs" else "Your songs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     TextButton(onClick = onRefresh) { Text("Refresh") }
                 }
                 OutlinedTextField(
@@ -604,6 +665,8 @@ private fun JMusicHome(
                                     Text(song.artist, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (song.album.isNotBlank()) Text(song.album, color = JMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
+                                IconButton(onClick = { toggleFavorite(song) }) { Icon(if (song.id in favoriteIds) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = if (song.id in favoriteIds) "Remove favorite" else "Add favorite", tint = if (song.id in favoriteIds) JGreen else JMuted) }
+                                IconButton(onClick = { addSongToPlaylist = song }) { Icon(Icons.Default.Add, contentDescription = "Add to playlist", tint = JMuted) }
                                 Text(formatTime(song.durationMs), color = JMuted, style = MaterialTheme.typography.labelSmall)
                             }
                         }
@@ -611,7 +674,26 @@ private fun JMusicHome(
                 }
             }
         }
-        MiniPlayer(
+    if (showCreatePlaylist) {
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylist = false },
+            title = { Text("Create playlist") },
+            text = { OutlinedTextField(value = playlistName, onValueChange = { playlistName = it }, label = { Text("Playlist name") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { val name = playlistName.trim(); if (name.isNotEmpty() && name !in playlists) { playlists = playlists + (name to emptyList()); persistLibrary(); showCreatePlaylist = false } }) { Text("Create") } },
+            dismissButton = { TextButton(onClick = { showCreatePlaylist = false }) { Text("Cancel") } },
+            containerColor = JCard
+        )
+    }
+    addSongToPlaylist?.let { song ->
+        AlertDialog(
+            onDismissRequest = { addSongToPlaylist = null },
+            title = { Text("Add to playlist") },
+            text = { if (playlists.isEmpty()) Text("Create a playlist first in the Playlists tab.") else Column { playlists.keys.forEach { name -> TextButton(onClick = { addToPlaylist(name, song); addSongToPlaylist = null }) { Text(name) } } } },
+            confirmButton = { TextButton(onClick = { addSongToPlaylist = null }) { Text("Done") } },
+            containerColor = JCard
+        )
+    }
+    MiniPlayer(
             title = currentTitle,
             artist = currentArtist,
             artwork = currentArtwork,
