@@ -16,6 +16,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -147,6 +149,7 @@ class MainActivity : ComponentActivity() {
                         onRefresh = { loadLocalSongs() },
                         onPlaySong = { song -> playLocalSong(song) },
                         onPlayOnline = { title, url -> playOnlineStream(title, url) },
+                        onPlayArchive = { track -> playOnlineStream(track.title, track.streamUrl) },
                         onOpenYouTube = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
                         onTogglePlayback = { if (player.isPlaying) player.pause() else if (player.mediaItemCount > 0) player.play() },
                         onPrevious = { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else if (currentIndex > 0) playLocalSong(songs[currentIndex - 1]) },
@@ -295,6 +298,7 @@ private fun JMusicHome(
     onRefresh: () -> Unit,
     onPlaySong: (LocalSong) -> Unit,
     onPlayOnline: (String, String) -> Unit,
+    onPlayArchive: (ArchiveTrack) -> Unit,
     onOpenYouTube: (String) -> Unit,
     onTogglePlayback: () -> Unit,
     onPrevious: () -> Unit,
@@ -309,7 +313,12 @@ private fun JMusicHome(
     var onlineTracks by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
     var searchingYouTube by remember { mutableStateOf(false) }
     var youtubeError by remember { mutableStateOf<String?>(null) }
+    var archiveQuery by remember { mutableStateOf("") }
+    var archiveTracks by remember { mutableStateOf<List<ArchiveTrack>>(emptyList()) }
+    var searchingArchive by remember { mutableStateOf(false) }
+    var archiveError by remember { mutableStateOf<String?>(null) }
     val youtubeRepository = remember { YouTubeMusicRepository() }
+    val archiveRepository = remember { InternetArchiveRepository() }
     val scope = rememberCoroutineScope()
     var streamTitle by remember { mutableStateOf("") }
     var streamUrl by remember { mutableStateOf("") }
@@ -409,9 +418,10 @@ private fun JMusicHome(
                 }
             }
             Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = tab == "phone", onClick = { tab = "phone" }, label = { Text("Phone library") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
-                FilterChip(selected = tab == "youtube", onClick = { tab = "youtube" }, label = { Text("YouTube search") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
+                FilterChip(selected = tab == "youtube", onClick = { tab = "youtube" }, label = { Text("YouTube") }, leadingIcon = { Icon(Icons.Default.Stream, null) })
+                FilterChip(selected = tab == "archive", onClick = { tab = "archive" }, label = { Text("Open music") }, leadingIcon = { Icon(Icons.Default.Album, null) })
                 FilterChip(selected = tab == "online", onClick = { tab = "online" }, label = { Text("Audio URL") }, leadingIcon = { Icon(Icons.Default.AudioFile, null) })
             }
             Spacer(Modifier.height(10.dp))
@@ -449,6 +459,56 @@ private fun JMusicHome(
                     }
                 } else if (youtubeError == null && !searchingYouTube) {
                     Text("Search for a song or artist to discover tracks.", color = JMuted, modifier = Modifier.padding(top = 12.dp))
+                }
+            } else if (tab == "archive") {
+                Text("Open music catalog", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Search Internet Archive recordings with Creative Commons or public-domain metadata and stream supported audio directly in JMusic.", color = JMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                OutlinedTextField(value = archiveQuery, onValueChange = { archiveQuery = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Song or artist") }, placeholder = { Text("Search licensed recordings") }, singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        scope.launch {
+                            searchingArchive = true
+                            archiveError = null
+                            archiveTracks = emptyList()
+                            try {
+                                archiveTracks = archiveRepository.search(archiveQuery)
+                                if (archiveTracks.isEmpty()) archiveError = "No matching recordings with a recognized open license were found. Try another search."
+                            } catch (error: Exception) {
+                                archiveError = error.message ?: "The open music catalog could not be searched."
+                            } finally {
+                                searchingArchive = false
+                            }
+                        }
+                    },
+                    enabled = archiveQuery.isNotBlank() && !searchingArchive,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = JGreen, contentColor = Color.Black)
+                ) {
+                    Text(if (searchingArchive) "Searching catalog…" else "Search open music", fontWeight = FontWeight.Bold)
+                }
+                archiveError?.let { Text(it, color = if (it.startsWith("No matching")) JMuted else MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                if (archiveTracks.isNotEmpty()) {
+                    LazyColumn(contentPadding = PaddingValues(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(archiveTracks, key = { it.identifier }) { track ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(JCard).clickable { onPlayArchive(track) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (!track.artworkUrl.isNullOrBlank()) {
+                                    AsyncImage(model = track.artworkUrl, contentDescription = "Artwork for ${track.title}", modifier = Modifier.size(58.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                                } else {
+                                    Box(Modifier.size(58.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Album, null, tint = JGreen)
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(track.creator, color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Tap to stream · Open-license metadata", color = JGreen, style = MaterialTheme.typography.labelSmall)
+                                }
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play ${track.title}", tint = JGreen)
+                            }
+                        }
+                    }
                 }
             } else if (tab == "online") {
                 Text("Play a stream you own or are licensed to use", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
