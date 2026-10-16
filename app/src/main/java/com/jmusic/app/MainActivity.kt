@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Stream
 import androidx.compose.material3.*
+import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
         permissionGranted = hasAudioPermission()
         if (permissionGranted) loadLocalSongs()
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = JGreen, background = JBackground, surface = JCard)) {
+            MaterialTheme(colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(this@MainActivity) else darkColorScheme(primary = JGreen, background = JBackground, surface = JCard)) {
                 Surface(Modifier.fillMaxSize(), color = JBackground) {
                     JMusicHome(
                         songs = songs,
@@ -315,12 +316,33 @@ private fun JMusicHome(
     var query by remember { mutableStateOf("") }
     var shownPosition by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    var showNowPlaying by remember { mutableStateOf(false) }
 
     LaunchedEffect(player) {
         while (true) {
             shownPosition = player.currentPosition.coerceAtLeast(0L)
             delay(500)
         }
+    }
+
+    if (showNowPlaying) {
+        NowPlayingDialog(
+            title = currentTitle,
+            artist = currentArtist,
+            artwork = currentArtwork,
+            isPlaying = isPlaying,
+            durationMs = durationMs,
+            positionMs = shownPosition,
+            shuffleEnabled = shuffleEnabled,
+            repeatMode = repeatMode,
+            onDismiss = { showNowPlaying = false },
+            onToggle = onTogglePlayback,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onSeek = onSeek,
+            onToggleShuffle = onToggleShuffle,
+            onCycleRepeat = onCycleRepeat
+        )
     }
 
     if (showQueue) {
@@ -378,6 +400,9 @@ private fun JMusicHome(
                 Column(Modifier.weight(1f)) {
                     Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
                     Text("Your music. Your player.", color = JMuted, style = MaterialTheme.typography.bodyMedium)
+                }
+                IconButton(onClick = { showNowPlaying = true }) {
+                    Icon(Icons.Default.Album, "Open full player", tint = JGreen, modifier = Modifier.size(26.dp))
                 }
                 IconButton(onClick = { showQueue = true }) {
                     Icon(Icons.Default.QueueMusic, "Open playback queue", tint = JGreen, modifier = Modifier.size(28.dp))
