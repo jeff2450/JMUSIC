@@ -153,7 +153,7 @@ class MainActivity : ComponentActivity() {
                         onSeek = { position -> player.seekTo(position) },
                         onToggleShuffle = { shuffleEnabled = !shuffleEnabled; player.shuffleModeEnabled = shuffleEnabled },
                         onCycleRepeat = { repeatMode = when (repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF }; player.repeatMode = repeatMode },
-                        onClear = { player.stop(); currentTitle = "Choose a song"; currentArtist = "Your music, your player"; currentArtwork = null; durationMs = 0; positionMs = 0; currentIndex = -1 }
+                        onClear = { player.stop(); player.clearMediaItems(); currentTitle = "Choose a song"; currentArtist = "Your music, your player"; currentArtwork = null; durationMs = 0; positionMs = 0; currentIndex = -1; activeSource = "phone"; isPlaying = false }
                     )
                 }
             }
