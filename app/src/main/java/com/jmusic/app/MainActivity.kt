@@ -105,12 +105,19 @@ class MainActivity : ComponentActivity() {
                 currentTitle = mediaItem?.mediaMetadata?.title?.toString() ?: "Unknown track"
                 currentArtist = mediaItem?.mediaMetadata?.artist?.toString() ?: "Unknown artist"
                 currentArtwork = mediaItem?.mediaMetadata?.artworkUri
+                currentIndex = songs.indexOfFirst { it.id.toString() == mediaItem?.mediaId }
                 durationMs = player.duration.coerceAtLeast(0L)
                 positionMs = player.currentPosition.coerceAtLeast(0L)
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) durationMs = player.duration.coerceAtLeast(0L)
                 if (playbackState == Player.STATE_ENDED) isPlaying = false
+            }
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                shuffleEnabled = shuffleModeEnabled
+            }
+            override fun onRepeatModeChanged(repeatModeValue: Int) {
+                repeatMode = repeatModeValue
             }
             override fun onPlayerError(error: PlaybackException) {
                 statusMessage = "Can't play this source. Check the URL, network, format, and streaming permission."
@@ -307,12 +314,53 @@ private fun JMusicHome(
     var streamUrl by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var shownPosition by remember { mutableLongStateOf(0L) }
+    var showQueue by remember { mutableStateOf(false) }
 
     LaunchedEffect(player) {
         while (true) {
             shownPosition = player.currentPosition.coerceAtLeast(0L)
             delay(500)
         }
+    }
+
+    if (showQueue) {
+        AlertDialog(
+            onDismissRequest = { showQueue = false },
+            title = { Text("Playback queue (${player.mediaItemCount})") },
+            text = {
+                if (player.mediaItemCount == 0) {
+                    Text("Your queue is empty. Play a song from your phone library to build a queue.", color = JMuted)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items((0 until player.mediaItemCount).toList(), key = { it }) { index ->
+                            val item = player.getMediaItemAt(index)
+                            val selected = index == player.currentMediaItemIndex
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selected) Color(0xFF263A2D) else JCard)
+                                    .clickable {
+                                        player.seekTo(index, 0L)
+                                        player.play()
+                                        showQueue = false
+                                    }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("${index + 1}", color = if (selected) JGreen else JMuted, modifier = Modifier.width(28.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.mediaMetadata.title?.toString() ?: "Unknown track", fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(item.mediaMetadata.artist?.toString() ?: "Unknown artist", color = JMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (selected) Icon(Icons.Default.PlayArrow, "Currently selected", tint = JGreen)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showQueue = false }) { Text("Done") } },
+            containerColor = JCard
+        )
     }
 
     val filteredSongs = remember(songs, query) {
@@ -331,7 +379,9 @@ private fun JMusicHome(
                     Text("JMusic", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
                     Text("Your music. Your player.", color = JMuted, style = MaterialTheme.typography.bodyMedium)
                 }
-                Icon(Icons.Default.QueueMusic, null, tint = JGreen, modifier = Modifier.size(28.dp))
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(Icons.Default.QueueMusic, "Open playback queue", tint = JGreen, modifier = Modifier.size(28.dp))
+                }
             }
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
